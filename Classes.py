@@ -6,7 +6,6 @@ import torchaudio
 import pandas as pd
 import matplotlib.pyplot as plt
 import torch
-import json
 
 def stereo_to_mono(signal:torch.Tensor):
     if signal.shape[0] == 2:
@@ -33,8 +32,8 @@ class BirdSoundDataset(Dataset):
         # 32000 프레임(1초)별로 분할
         num_seg = int(signal.shape[1] / sample_rate) + 1                     # 1초 단위의 조각이 몇 개 있는지 (마지막 0.x초 포함)
         pad = num_seg * sample_rate - signal.shape[1]                        # 마지막 0.x초의 부족한 프레임은 0으로 padding
-        pad = (0, pad)                                                      # padding size
-        signal = torch.nn.functional.pad(signal, pad, 'constant', value=0)  # padding
+        pad = (0, pad)                                                       # padding size
+        signal = torch.nn.functional.pad(signal, pad, 'constant', value=0)   # padding
         signal = signal.reshape((-1, 1, sample_rate))                        # (audio_length, channel, 32000) 크기의 텐서로 변경
         
         item = {
@@ -52,6 +51,29 @@ class BirdSoundDataset(Dataset):
         label = self.annotations['label'].iloc[index]
         return label
 
+class ScoredBirdDataset(BirdSoundDataset):
+    def __init__(self, annotations:Path, audio_dir:Path, classes:list):
+        super(ScoredBirdDataset, self).__init__(annotations, audio_dir, classes)
+        self.annotations = pd.read_csv(annotations)
+        labels = self.annotations['label']
+        labels = labels.apply(self.str_to_float_list)
+        self.annotations.drop('label', axis='columns', inplace=True)
+        self.annotations.insert(0, 'label', labels)
+
+        labels = labels.apply(sum)
+        scored = labels > 0
+
+        self.annotations = self.annotations[scored].reset_index(drop=True)
+
+    def __getitem__(self, index):
+        item = super(ScoredBirdDataset, self).__getitem__(index)
+        item['labels'] = self.annotations['label'].iloc[index]
+        return item
+
+    def str_to_float_list(self, input:str):
+        out = list(map(float, input[1:-1].split(', ')))
+        return out
+
 class BirdSoundDataset_te(Dataset):
     def __init__(self, audio_dir:Path, classes):
         super(BirdSoundDataset_te, self).__init__()
@@ -67,7 +89,13 @@ class BirdSoundDataset_te(Dataset):
         audio_path = self.audio_list[index]
         signal, sample_rate = torchaudio.load(audio_path)
 
-        stereo_to_mono(signal) # Stereo 채널 데이터를 mono로 변경
+        # sample rate를 32000으로 변경
+        if not sample_rate == 32000:
+            transform = torchaudio.transforms.Resample(sample_rate, 32000)
+            signal, sample_rate = transform(signal), 32000
+
+        # Stereo 채널 데이터를 mono로 변경
+        stereo_to_mono(signal)
 
         # 5초 x sample_rate 만큼 데이터 확장 후 1초별로 프레임 분할된 5초간의 텐서들의 집합으로 변경
         num_5sec_seg = signal.shape[1] / (sample_rate*5)

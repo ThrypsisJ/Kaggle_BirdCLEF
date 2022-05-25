@@ -1,5 +1,6 @@
 train_audio
 test_soundscapes
 params
+new_audios
 __pycache__
 .ipynb_checkpoints
